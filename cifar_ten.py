@@ -1,15 +1,11 @@
 
 # coding: utf-8
 
-# In[11]:
-
-
 import os
-from keras.models import model_from_json
-import numpy as np
-import sklearn
-import sklearn.cross_validation
-import sklearn.linear_model
+import cv2
+import random
+import time
+
 import wget
 from wget import bar_thermometer
 
@@ -17,47 +13,30 @@ import tarfile
 import pickle
 import numpy as np
 
-#get_ipython().magic('pylab inline')
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-
-from keras.layers import Dense
-from keras.models import Sequential
-import numpy
-import keras
-
-import cv2
-
 import keras
 from keras.datasets import cifar10
 from keras.preprocessing.image import ImageDataGenerator
 from keras.models import Sequential
+from keras.models import model_from_json
 from keras.layers import Dense, Dropout, Activation, Flatten, Concatenate, Input, Merge
 from keras.layers import Conv2D, MaxPooling2D, GlobalMaxPooling2D
-import os
 
+import sklearn
+import sklearn.linear_model
+import sklearn.svm as svm
 from sklearn.preprocessing import MinMaxScaler
-
 from sklearn.metrics import log_loss, accuracy_score, auc, roc_curve, roc_auc_score
-from sklearn import svm
-
-import random
-import time
+from sklearn.externals import joblib
 
 from scipy.ndimage import uniform_filter
-
-import sklearn.svm as svm
-
-from sklearn.externals import joblib
 
 import matplotlib
 matplotlib.use('TkAgg')
 
-# Functions
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 
-# In[32]:
-
-
+###################### Start of functions definitions ############################
 def load_cifar_10():
     """
     Loading and preparing cifar 10 dataset
@@ -223,7 +202,7 @@ def convert_images(img):
     img_size = 32
     # Number of channels in each image, 3 channels: Red, Green, Blue.
     num_channels = 3
-    
+
     # Reshape the array to 4-dimensions.
     images = img.reshape([-1, num_channels, img_size, img_size])
     # Reorder the indices of the array.
@@ -295,10 +274,11 @@ def merge_sets(dicts):
     return list_images, list_cls
 
 
-def random_images_from_classes(num_samples, x_set, y_set):
+def random_images_from_classes(num_classes, num_samples, x_set, y_set):
     """
     Generate random images from given sets, each sample contains one class
 
+    num_classes - number of classes to choose from
     num_samples - number of samples to choose from each class
     x_set - array of all images
     y_set - array of all classes
@@ -322,7 +302,7 @@ def plot_random_images_from_classes(num_classes, num_samples, x_set, y_set):
     x_set - array of all images
     y_set - array of all classes
     """
-    images = random_images_from_classes(num_samples, x_set, y_set)
+    images = random_images_from_classes(num_classes, num_samples, x_set, y_set)
     fig, axarr = plt.subplots(num_classes, num_samples)
     fig.set_figheight(num_classes*1.5)
     fig.set_figwidth(num_samples*1.5)
@@ -331,6 +311,7 @@ def plot_random_images_from_classes(num_classes, num_samples, x_set, y_set):
             subplot = axarr[i,j]
             subplot.axis('off')
             subplot.imshow(images[i][j])
+
     matplotlib.pyplot.show(block=True)
             
 def save_model(model, filename='model'):
@@ -363,50 +344,6 @@ def read_model(filename='model'):
     print('Loaded', filename ,'from disk')
     return loaded_model            
 
-def zca_whiten(X):
-    """
-    Applies ZCA whitening to the data (X)
-    http://xcorr.net/2011/05/27/whiten-a-matrix-matlab-code/
-    
-    from https://gist.github.com/iborko/5d9c2c16004ce8b926ea/revisions
-
-    X: numpy 2d array
-        input data, rows are data points, columns are features
-
-    Returns: 
-    ZCA whitened 2d array
-    """
-    assert(X.ndim == 2)
-    EPS = 10e-5
-
-    #   covariance matrix
-    cov = np.dot(X.T, X)
-    #   d = (lambda1, lambda2, ..., lambdaN)
-    d, E = np.linalg.eigh(cov)
-    #   D = diag(d) ^ (-1/2)
-    D = np.diag(1. / np.sqrt(d + EPS))
-    #   W_zca = E * D * E.T
-    W = np.dot(np.dot(E, D), E.T)
-
-    X_white = np.dot(X, W)
-
-    return X_white
-
-def zca_whitening(x_set):
-    """
-    ZCA for given set
-    
-    x_set - set for zca whitening
-    
-    Returns:
-    w_set - whitened set of images
-    """
-    x_set_features = x_set.reshape(x_set.shape[0],x_set.shape[1]*x_set.shape[2]*x_set.shape[3])
-    whitened_set = zca_whiten(x_set_features)
-    w_set = whitened_set.reshape(x_set.shape)
-    
-    return w_set
-
 def create_hog_features(x_set):
     """
     Creation of hog features for given set of images
@@ -436,6 +373,7 @@ def create_hog_features(x_set):
 
     i=0
     for image in x_set:
+        image=image.astype(np.uint8)
         r_image = cv2.resize(image, None, fx=2, fy=2, interpolation = cv2.INTER_CUBIC)
         gray = cv2.cvtColor(r_image, cv2.COLOR_BGR2GRAY)
         h_image = hog.compute(gray)
@@ -493,17 +431,17 @@ def train_cnn_net(x_train, y_train, x_test, y_test):
 
     for kw in (2, 3):    # kernel sizes
         submodel = Sequential()
-        submodel.add(Conv2D(FILTERS, (kw, kw), padding='same',
+        submodel.add(Conv2D(FILTERS_1, (kw, kw), padding='same',
                      input_shape=x_train.shape[1:]))
         submodel.add(Activation('relu'))
-        submodel.add(Conv2D(FILTERS, (kw, kw)))
+        submodel.add(Conv2D(FILTERS_1, (kw, kw)))
         submodel.add(Activation('relu'))
         submodel.add(MaxPooling2D(pool_size=(2, 2)))
         submodel.add(Dropout(P_DROPOUT_1))
         submodels.append(submodel) 
 
     big_model = Sequential()
-    big_model.add(Merge(submodels, mode='concat'))
+    big_model.add(Merge(submodels, mode="concat"))
 
     big_model.add(Conv2D(FILTERS_2, (3, 3), padding='same'))
     big_model.add(Activation('relu'))
@@ -598,188 +536,89 @@ def convert_cnn_predictions_for_categories(y_predicted):
     
     return y_predicted_categories
 
+###################### End of functions definitions ############################
 
-# In[5]:
-
+#Main script
 
 x_train, y_train, x_test, y_test = load_cifar_10()
 
-
-# In[9]:
-
-
 load_best_model= True
 
-answer = input("Load last best trained models of CNN and SVM? [Y/n]")
+answer = input("Load last best trained models of CNN? [Y/n]")
 if(answer=='n' or answer=='N'):
-    print("OK! We will train our convolutional net and Support Vector Machine again! And again... and again... ")
+    print("OK! We will train our convolutional net again! And again... and again... \nThis can take a while...")
     load_best_model = False
 else:
-    print("Great choice! You will save time and test last trained models!")
-
-
-# In[14]:
-
+    print("Great choice! You will save time and test last trained model!")
 
 num_classes = 10
 num_samples = 10
 
 if(load_best_model==False):
-    #Preparation of train data for SVM classifier (not normalized, but hog features extracted)
-    svm_x_train = create_hog_features(x_train)
-
     #Preparation of train data for CNN
     cnn_y_train = keras.utils.to_categorical(y_train, num_classes)
     cnn_x_train = process_images(x_train, normalization=True, to_gray=False)
-
-#Preparation of test data for SVM classifier (not normalized, but hog features extracted)
-svm_x_test = create_hog_features(x_test)
-svm_y_test = y_test
 
 #Preparation of data for CNN
 cnn_x_test = process_images(x_test, normalization=True, to_gray=False)
 cnn_y_test = keras.utils.to_categorical(y_test, num_classes)
 
-
-# In[28]:
-
-
 if(load_best_model):
     cnn = read_model('best_model_long_train')
     cnn.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-    #clf = joblib.load('simple_svm_04753.pkl')
 else:
-    cnn = train_cnn_net(cnn_x_train, cnn_y_train, cnn_x_test, cnn_y_test)
-    clf = train_svm(svm_x_train, svm_y_train)
-    
-    answer = input("Save new models? [y/N]")
+    cnn = train_cnn_net(cnn_x_train, cnn_y_train, cnn_x_test, cnn_y_test) 
+    answer = input("Save new model to file? [y/N]")
     if(answer=='y' or answer=='Y'):
-        print("OK! Just give us the filenames! ")
-        filename=input('Type filename for svm:')
-        joblib.dump(clf, filename + '.pkl') 
+        print("OK! Just give us the filename for saving cnn model (default is 'model')! ")
         filename=input('Type filename for cnn:')
         save_model(big_model, filename)    
 
+answer = input("Load last best trained models of SVM? [Y/n]")
+load_best_model = True
+if(answer=='n' or answer=='N'):
+    print("OK! We will train our SVM again! And again... and again... ")
+    load_best_model = False
+else:
+    print("Great choice! You will save time and test last trained model!")
 
-# In[ ]:
-
+if(load_best_model):
+    clf = joblib.load('simple_svm_04753.pkl')
+else:
+    #Preparation of train data for SVM classifier (not normalized, but hog features extracted)
+    print(x_train.shape)
+    svm_x_train = create_hog_features(x_train.copy())
+    clf = train_svm(svm_x_train, svm_y_train)
+    
+    answer = input("Save new model? [y/N]")
+    if(answer=='y' or answer=='Y'):
+        print("OK! Just give us the filename! ")
+        filename=input('Type filename for svm:')
+        joblib.dump(clf, filename + '.pkl') 
 
 print("Testing trained models!")
 y_cnn_predicted_probs, cnn_scores, auc = test_cnn_net_model(cnn, cnn_x_test, cnn_y_test)
 y_cnn_predicted = convert_cnn_predictions_for_categories(y_cnn_predicted_probs)
-svm_score = 0.47539999999999999 #test_svm_model(clf, svm_x_test, svm_y_test)
+
+answer = input("Testing trained model of SVM can take a while, we can tell you what our last best score is! Test it anyway? [y/N]")
+if(answer=='y' or answer=='Y'):
+    #Preparation of test data for SVM classifier (not normalized, but hog features extracted)
+    svm_x_test = create_hog_features(x_test.copy())
+    svm_y_test = y_test
+    svm_score = test_svm_model(clf, svm_x_test, svm_y_test)  
+else:
+    svm_score = 0.47539999999999999
+      
 print("CNN scores are",'loss:',cnn_scores[0],'accuracy:', cnn_scores[1])
-print("SVM score is",'accuracy:', svm_score)
+print("SVM accuracy is", svm_score)
 
 
-# In[ ]:
+answer = 'n'
+while(answer!='q' and answer!='Q'):
+    print("Plot original images and labes!")
+    plot_random_images_from_classes(num_classes, num_samples, process_images(x_test, normalization=True, to_gray=False), y_test)
+    print("Plot predicted labels and images with CNN!")
+    plot_random_images_from_classes(num_classes, num_samples, process_images(x_test, normalization=True, to_gray=False), y_cnn_predicted)
+    answer = input("Press q/Q to quit or any key to plot other images")
 
-
-#x_test_org, y_test_org = convert_images_from_batch(test_file)
-print("Plot predicted images for CNN!")
-plot_random_images_from_classes(num_classes, num_samples, x_test, y_cnn_predicted)
-
-
-# In[ ]:
-
-
-#from keras.datasets import cifar10
-# The data, split between train and test sets:
-#(x_train, y_train), (x_test, y_test) = cifar10.load_data()
-
-
-# In[ ]:
-
-
-#model = train_neural_net()
-
-
-# In[ ]:
-
-
-# auc_current
-
-# 50000/50000 [==============================] - 311s 6ms/step - loss: 1.4879 - acc: 0.4693 - val_loss: 2.3171 - val_acc: 0.2768
-
-#best 0.94713899999999995 - batch_size = 10, optimizer = adam all filters 3x3
-#moj model  0.93258198333333342
-# Test loss: 1.0221589056
-# Test accuracy: 0.6479
-# AUC: 0.938229816667
-
-# Test loss: 0.885085227585
-# Test accuracy: 0.693
-# AUC: 0.952929566667 
-
-# CNN proceeded in time: 3606.757651090622
-# Test loss: 0.887687795448
-# Test accuracy: 0.7006
-# AUC: 0.954549955556 
-# params: 
-# filters: 32 
-# epochs: 5 
-# batch_size: 10 
-# hidden_neurons: 512 
-# dropout1: 0.1 
-# dropout2: 0.2
-
-# CNN proceeded in time: 3936.816420316696
-# 10000/10000 [==============================] - 40s 4ms/step
-# Test loss: 0.832241560078
-# Test accuracy: 0.7128
-# AUC: 0.957377333333 
-# params: 
-# filters: 32 
-# epochs: 5 
-# batch_size: 10 
-# hidden_neurons: 512 
-# dropout1: 0.1 
-# dropout2: 0.2
-
-# CNN proceeded in time: 25258.899317741394
-# 10000/10000 [==============================] - 34s 3ms/step
-# Test loss: 0.795009008026
-# Test accuracy: 0.738
-# AUC: 0.964171066667 
-# params: 
-# filters: 32 
-# epochs: 10 
-# batch_size: 10 
-# hidden_neurons: 512 
-# dropout1: 0.1 
-# dropout2: 0.2
-
-#ZCA whitening:
-# CNN proceeded in time: 2007.7863523960114
-# 10000/10000 [==============================] - 18s 2ms/step
-# Test loss: 1.457717132
-# Test accuracy: 0.5265
-# AUC: 0.90052195 
-# params: 
-# filters: 32 
-# epochs: 5 
-# batch_size: 10 
-# hidden_neurons: 512 
-# dropout1: 0.1 
-# dropout2: 0.2
-
-#GREY GIVE  MORE EPOCHS
-# CNN proceeded in time: 2019.2916626930237
-# 10000/10000 [==============================] - 20s 2ms/step
-# Test loss: 0.905633279037
-# Test accuracy: 0.687
-# AUC: 0.950281644444 
-# params: 
-# filters: 32 64 
-# epochs: 5 
-# batch_size: 10 
-# hidden_neurons: 512 
-# dropout1: 0.1 
-# dropout2: 0.2
-
-
-# In[ ]:
-
-
-#get_ipython().system('jupyter nbconvert --to script cifar_ten.ipynb')
 
